@@ -1,0 +1,24 @@
+steps:
+  # Update git repo
+  - name: gcr.io/cloud-builders/git
+    args:
+      - "fetch"
+      - "--unshallow"
+
+  # Build the container image
+  - name: "gcr.io/cloud-builders/docker"
+    entrypoint: /bin/bash
+    args:
+      - "-c"
+      - |
+        set -e
+        make build-image IMAGE_NAME=${_IMAGE}
+        make test-image
+        make push-image
+
+# Store images in Google Container Registry
+images:
+  - "${_IMAGE}:latest"
+
+substitutions:
+  _IMAGE: "gcr.io/${PROJECT_ID}/tsp"
