@@ -59,7 +59,9 @@ def main(config_path):
     config = load_config(config_path)
 
     param_grid = config["hyperparams"]
-    mlflow.set_experiment(config.get("mlflow_experiment", "TSP_Gridsearch"))
+    mlflow.set_experiment(
+        config.get("mlflow_experiment", "TSP_Simulated_Annealing")
+    )
 
     # Configuration for adaptive search
     use_adaptive = config.get("adaptive_search", False)

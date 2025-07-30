@@ -174,7 +174,6 @@ class TSPProblem:
                 city_order_str = city_order_str[:497] + "..."
 
             mlflow.log_param(f"{solution_name}_route", city_order_str)
-            mlflow.log_param(f"{solution_name}_num_cities", len(solution))
 
             # Log plot of the solution if brazil_gdf is provided
             if brazil_gdf is not None:
@@ -207,7 +206,7 @@ class SimulatedAnnealing:
         method="logarithmic",
         total_iterations=1000,
         disturbance_type="simple_swap",
-        experiment_name="TSP_Simulated_Annealing",
+        # experiment_name="TSP_Simulated_Annealing",
     ):
         """
         Initializes the Simulated Annealing algorithm.
@@ -221,13 +220,13 @@ class SimulatedAnnealing:
         self.total_temperatures = total_temperatures
         self.method = method
         self.disturbance_type = disturbance_type
-        self.experiment_name = experiment_name
+        # self.experiment_name = experiment_name
 
         if method not in ["cauchy", "logarithmic"]:
             raise ValueError("Method must be either 'cauchy' or 'logarithmic'")
 
         # Set MLflow experiment
-        mlflow.set_experiment(self.experiment_name)
+        # mlflow.set_experiment(self.experiment_name)
 
     def optimize(self, problem: TSPProblem, brazil_gdf=None):
         # Log hyperparameters (run should already be active from main)
