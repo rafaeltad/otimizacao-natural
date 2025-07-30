@@ -2,6 +2,9 @@
 !.gitignore
 !.dockerignore
 
+mlflow/
+mlruns/
+
 # Python
 __pycache__/
 *.py[cod]
