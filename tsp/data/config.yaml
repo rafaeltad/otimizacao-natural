@@ -1,11 +1,23 @@
 hyperparams:
   initial_temperature:
+    - 10
+    - 100
     - 1000
   disturbance_type:
     - "simple_swap"
+    - "multiple_swap"
   total_temperatures:
+    - 3
+    - 5
     - 8
+    # - 8
+    # - 16
+    # - 32
   total_iterations:
+    - 100
+    - 500
     - 1000
-n_cities: 30
+n_cities: 10
 cities_data_path: "tsp/data/municipios.csv"
+adaptive_search: true
+max_search_iterations: 2
