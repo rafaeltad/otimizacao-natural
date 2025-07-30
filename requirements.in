@@ -9,3 +9,7 @@ torch
 torchvision
 mlflow
 geopy
+openpyxl
+geopandas
+geodatasets
+geobr
