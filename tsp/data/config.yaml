@@ -2,22 +2,39 @@ hyperparams:
   initial_temperature:
     - 10
     - 100
-    - 1000
-  disturbance_type:
-    - "simple_swap"
-    - "multiple_swap"
-  total_temperatures:
-    - 3
-    - 5
-    - 8
-    # - 8
-    # - 16
-    # - 32
-  total_iterations:
-    - 100
     - 500
     - 1000
-n_cities: 10
+  disturbance_type:
+    # - "simple_swap"
+    - "multiple_swap"
+  total_temperatures:
+    # - 3
+    # - 5
+    # - 8
+    - 8
+    - 16
+    - 32
+    - 64
+  total_iterations:
+    # - 100
+    # - 500
+    - 1000
+    - 10000
+    - 50000
+    # - 2000
+  method:
+    - "logarithmic"  # Changed from "linear" to "logarithmic"
+    - "exponential"
+sa_config:
+  keep_best: true
+  log_interval: 100
+  plot_interval: 4
+  alpha: 0.95
+  console_log_interval: 100
+  performance_mode: false
+
+n_cities: 30
 cities_data_path: "tsp/data/municipios.csv"
-adaptive_search: true
+adaptive_search: false
 max_search_iterations: 2
+mlflow_experiment: "TSP_Simulated_Annealing_30_Cities_Final"

@@ -24,6 +24,14 @@ class TSPProblem:
     def __init__(self, cities_gdf: gpd.GeoDataFrame, initial_solution=None):
         self.cities = cities_gdf
         self.num_cities = len(cities_gdf)
+        # Pre-compute distance matrix for performance
+        self.distance_matrix = self._compute_distance_matrix()
+        # Create a mapping from coordinates to original indices for efficient lookup
+        self._coord_to_index = {}
+        for idx, row in cities_gdf.iterrows():
+            coord_key = (row["latitude"], row["longitude"])
+            self._coord_to_index[coord_key] = idx
+
         if initial_solution is None:
             self.initial_solution = self._initial_solution()
         else:
@@ -37,33 +45,64 @@ class TSPProblem:
             n=self.num_cities, random_state=42
         ).reset_index(drop=True)
 
+    def _compute_distance_matrix(self):
+        """Pre-compute all pairwise distances between cities for performance."""
+        n = len(self.cities)
+        distances = np.zeros((n, n))
+        for i in range(n):
+            for j in range(i + 1, n):
+                coords_a = (
+                    self.cities.iloc[i]["latitude"],
+                    self.cities.iloc[i]["longitude"],
+                )
+                coords_b = (
+                    self.cities.iloc[j]["latitude"],
+                    self.cities.iloc[j]["longitude"],
+                )
+                dist = get_distance(coords_a, coords_b)
+                distances[i][j] = distances[j][i] = dist
+        return distances
+
     def energy(self, solution):
-        """Calculate the total distance of the TSP solution."""
+        """Calculate the total distance of the TSP solution using pre-computed distance matrix."""
         if solution is None or len(solution) == 0:
             return float("inf")
-        total_distance = 0
+
+        total_distance = 0.0
+        # Get the original city indices in the order they appear in the solution
+        solution_indices = []
         for i in range(len(solution)):
-            city_a = solution.iloc[i]
-            city_b = solution.iloc[(i + 1) % len(solution)]
-            coords_a = (city_a["latitude"], city_a["longitude"])
-            coords_b = (city_b["latitude"], city_b["longitude"])
-            total_distance += get_distance(coords_a, coords_b)
+            city_row = solution.iloc[i]
+            coord_key = (city_row["latitude"], city_row["longitude"])
+            original_idx = self._coord_to_index[coord_key]
+            solution_indices.append(original_idx)
+
+        for i in range(len(solution_indices)):
+            idx_a = solution_indices[i]
+            idx_b = solution_indices[(i + 1) % len(solution_indices)]
+            total_distance += float(self.distance_matrix[idx_a][idx_b])
         return total_distance
 
     def simple_swap(self, solution):
+        """Optimized simple swap with reduced DataFrame operations."""
         new_solution = solution.copy()
-        idx1, idx2 = random.sample(range(len(solution)), 2)
-        new_solution.iloc[idx1], new_solution.iloc[idx2] = (
-            new_solution.iloc[idx2],
-            new_solution.iloc[idx1],
-        )
+        n = len(solution)
+        idx1, idx2 = random.sample(range(n), 2)
+        # Use more efficient iloc swapping
+        temp = new_solution.iloc[idx1].copy()
+        new_solution.iloc[idx1] = new_solution.iloc[idx2]
+        new_solution.iloc[idx2] = temp
         return new_solution
 
     def multiple_swap(self, solution):
+        """Optimized multiple swap with reduced operations."""
         new_solution = solution.copy()
-        indices = sorted(random.sample(range(len(solution)), 2))
+        n = len(solution)
+        indices = sorted(random.sample(range(n), 2))
         idx1, idx2 = indices[0], indices[1]
-        new_solution.iloc[idx1:idx2] = new_solution.iloc[idx1:idx2][::-1]
+        # Reverse the slice more efficiently
+        segment = new_solution.iloc[idx1:idx2].iloc[::-1]
+        new_solution.iloc[idx1:idx2] = segment.values
         return new_solution
 
     def disturbance(self, type, solution):
@@ -159,7 +198,7 @@ class TSPProblem:
         if solution is not None and len(solution) > 0:
             # Log solution energy/distance
             energy = self.energy(solution)
-            mlflow.log_metric(f"{solution_name}_energy", energy)
+            # mlflow.log_metric(f"{solution_name}_energy", energy)
 
             # Log city order as a parameter (truncated if too long)
             city_names = (
@@ -206,6 +245,13 @@ class SimulatedAnnealing:
         method="logarithmic",
         total_iterations=1000,
         disturbance_type="simple_swap",
+        keep_best=True,
+        alpha=0.95,
+        # Performance optimization parameters
+        log_interval=10,  # Log metrics every N iterations instead of every iteration
+        console_log_interval=500,  # Console logging frequency
+        plot_interval=5,  # Generate plots every N temperature steps
+        performance_mode=False,  # When True, minimal logging for speed
         # experiment_name="TSP_Simulated_Annealing",
     ):
         """
@@ -213,6 +259,10 @@ class SimulatedAnnealing:
 
         Parameters:
             experiment_name (str): Name for the MLflow experiment
+            log_interval (int): Log metrics every N iterations (default: 10)
+            console_log_interval (int): Console logging frequency (default: 500)
+            plot_interval (int): Generate plots every N temperature steps (default: 5)
+            performance_mode (bool): When True, uses minimal logging for maximum speed
         """
         self.initial_temperature = initial_temperature
         self.total_iterations = total_iterations
@@ -220,35 +270,45 @@ class SimulatedAnnealing:
         self.total_temperatures = total_temperatures
         self.method = method
         self.disturbance_type = disturbance_type
+        self.keep_best = keep_best
+        self.alpha = alpha
+
+        # Performance optimization settings
+        if performance_mode:
+            self.log_interval = 100
+            self.console_log_interval = 1000
+            self.plot_interval = float("inf")  # No intermediate plots
+        else:
+            self.log_interval = log_interval
+            self.console_log_interval = console_log_interval
+            self.plot_interval = plot_interval
+
         # self.experiment_name = experiment_name
 
-        if method not in ["cauchy", "logarithmic"]:
-            raise ValueError("Method must be either 'cauchy' or 'logarithmic'")
+        if method not in ["cauchy", "logarithmic", "exponential"]:
+            raise ValueError(
+                "Method must be either 'cauchy', 'logarithmic' or 'exponential'"
+            )
 
         # Set MLflow experiment
         # mlflow.set_experiment(self.experiment_name)
 
     def optimize(self, problem: TSPProblem, brazil_gdf=None):
-        # Log hyperparameters (run should already be active from main)
-        mlflow.log_param("initial_temperature", self.initial_temperature)
-        mlflow.log_param("total_iterations", self.total_iterations)
-        mlflow.log_param("total_temperatures", self.total_temperatures)
-        mlflow.log_param("method", self.method)
-        mlflow.log_param("disturbance_type", self.disturbance_type)
-        mlflow.log_param("num_cities", problem.num_cities)
-
         current_solution = problem.initial_solution
         current_energy = problem.energy(current_solution)
         minimum_energy = current_energy
         minimum_solution = current_solution.copy()
 
-        # Log initial solution energy
-        mlflow.log_metric("initial_energy", current_energy)
-
-        # Log initial solution details with plot
-        problem.log_solution_to_mlflow(
-            current_solution, "initial_solution", brazil_gdf
-        )
+        # Store metrics for logging after completion
+        metrics_history = {
+            "temperatures": [],
+            "current_energies": [],
+            "min_energies": [],
+            "best_energies": [],
+            # "final_solution_energies": [],
+            # "best_solution_energies": [],
+            "solutions_history": [],
+        }
 
         total_iterations_count = 0
         accepted_moves = 0
@@ -259,15 +319,14 @@ class SimulatedAnnealing:
                 temperature = self.initial_temperature / (1 + self.k)
             elif self.method == "logarithmic":
                 temperature = self.initial_temperature / np.log2(2 + self.k)
+            elif self.method == "exponential":
+                temperature = self.initial_temperature * (self.alpha**self.k)
             else:
                 temperature = self.initial_temperature  # fallback
 
-            # Log temperature for each cooling step
-            mlflow.log_metric("temperature", temperature, step=self.k)
-
-            # Store solutions at the beginning of each temperature k
-            current_solution_at_k_start = current_solution.copy()
-            minimum_solution_at_k_start = minimum_solution.copy()
+            # Store temperature for later logging
+            metrics_history["temperatures"].append((temperature, self.k))
+            LOGGER.info(f"Temperature at step {self.k}: {temperature}")
 
             for n in range(0, self.total_iterations):
                 new_solution = problem.disturbance(
@@ -287,53 +346,120 @@ class SimulatedAnnealing:
                     if current_energy < minimum_energy:
                         minimum_energy = current_energy
                         minimum_solution = current_solution.copy()
-                        # Log new best energy
-                        mlflow.log_metric(
-                            "best_energy",
-                            minimum_energy,
-                            step=total_iterations_count,
+                        # Store best energy for later logging
+                        metrics_history["best_energies"].append(
+                            (minimum_energy, total_iterations_count)
                         )
 
-                # Log current energy every iteration
-                mlflow.log_metric(
-                    "current_energy",
-                    current_energy,
-                    step=total_iterations_count,
+                # Store metrics for later logging
+                metrics_history["current_energies"].append(
+                    (current_energy, total_iterations_count)
                 )
-                mlflow.log_metric(
-                    "min_energy_so_far",
-                    minimum_energy,
-                    step=total_iterations_count,
+                metrics_history["min_energies"].append(
+                    (minimum_energy, total_iterations_count)
                 )
 
-                # Log progress every 100 iterations for console output
-                if np.remainder(n + 1, 100) == 0:
-                    LOGGER.info([self.k, n + 1, minimum_energy])
+                # Optimized console logging with reduced frequency
+                if np.remainder(n + 1, self.console_log_interval) == 0:
+                    LOGGER.info(
+                        f"Step: {self.k}, Temp: {temperature:.2f}, Iter: {n + 1}, "
+                        f"Min: {minimum_energy:.2f}, Current: {current_energy:.2f}"
+                    )
 
                 total_iterations_count += 1
 
-            # Log solutions at the end of each temperature k
+            # Store solutions at the end of each temperature k for later logging
             final_solution_k_energy = problem.energy(current_solution)
             best_solution_k_energy = problem.energy(minimum_solution)
 
-            # Log energy metrics for this temperature step
-            mlflow.log_metric(
-                f"final_solution_k_{self.k}_energy", final_solution_k_energy
-            )
-            mlflow.log_metric(
-                f"best_solution_k_{self.k}_energy", best_solution_k_energy
-            )
+            # metrics_history["final_solution_energies"].append(
+            #     (f"final_solution_k_{self.k}_energy", final_solution_k_energy)
+            # )
+            # metrics_history["best_solution_energies"].append(
+            #     (f"best_solution_k_{self.k}_energy", best_solution_k_energy)
+            # )
 
-            problem.log_solution_to_mlflow(
-                current_solution, f"final_solution_k_{self.k}", brazil_gdf
+            # Store solutions for later logging
+            should_plot = (self.k % self.plot_interval == 0) or (
+                self.k == self.total_temperatures - 1
             )
-            problem.log_solution_to_mlflow(
-                minimum_solution, f"best_solution_k_{self.k}", brazil_gdf
+            metrics_history["solutions_history"].append(
+                {
+                    "current_solution": current_solution.copy(),
+                    "minimum_solution": minimum_solution.copy(),
+                    "step": self.k,
+                    "should_plot": should_plot,
+                }
             )
 
             self.k += 1
+            # Start with the best solution from the previous temperature
+            if self.keep_best:
+                current_solution = minimum_solution.copy()
             if self.k >= self.total_temperatures:
                 end = True
+
+        # ========== ALL MLFLOW LOGGING HAPPENS HERE AFTER OPTIMIZATION ==========
+
+        # Log hyperparameters
+        mlflow.log_param("initial_temperature", self.initial_temperature)
+        mlflow.log_param("total_iterations", self.total_iterations)
+        mlflow.log_param("total_temperatures", self.total_temperatures)
+        mlflow.log_param("method", self.method)
+        mlflow.log_param("disturbance_type", self.disturbance_type)
+        mlflow.log_param("num_cities", problem.num_cities)
+
+        # Log initial solution energy
+        initial_energy = problem.energy(problem.initial_solution)
+        mlflow.log_metric("initial_energy", initial_energy)
+
+        # Log initial solution details with plot
+        problem.log_solution_to_mlflow(
+            problem.initial_solution, "initial_solution", brazil_gdf
+        )
+
+        # Log temperature history
+        for temperature, step in metrics_history["temperatures"]:
+            mlflow.log_metric("temperature", temperature, step=step)
+
+        # Log current energy history (sample every log_interval to avoid too many points)
+        for i, (energy, step) in enumerate(
+            metrics_history["current_energies"]
+        ):
+            if i % self.log_interval == 0:  # Sample based on log_interval
+                mlflow.log_metric("current_energy", energy, step=step)
+
+        # Log minimum energy history (sample every log_interval)
+        for i, (energy, step) in enumerate(metrics_history["min_energies"]):
+            if i % self.log_interval == 0:  # Sample based on log_interval
+                mlflow.log_metric("min_energy_so_far", energy, step=step)
+
+        # Log all best energy improvements
+        for energy, step in metrics_history["best_energies"]:
+            mlflow.log_metric("best_energy", energy, step=step)
+
+        # # Log final and best solution energies for each temperature step
+        # for metric_name, energy in metrics_history["final_solution_energies"]:
+        #     mlflow.log_metric(metric_name, energy)
+
+        # for metric_name, energy in metrics_history["best_solution_energies"]:
+        #     mlflow.log_metric(metric_name, energy)
+
+        # Log solutions history
+        for solution_data in metrics_history["solutions_history"]:
+            step = solution_data["step"]
+            should_plot = solution_data["should_plot"]
+
+            problem.log_solution_to_mlflow(
+                solution_data["current_solution"],
+                f"final_solution_k_{step}",
+                brazil_gdf if should_plot else None,
+            )
+            problem.log_solution_to_mlflow(
+                solution_data["minimum_solution"],
+                f"best_solution_k_{step}",
+                brazil_gdf if should_plot else None,
+            )
 
         # Log final metrics
         mlflow.log_metric("final_energy", minimum_energy)
@@ -345,8 +471,8 @@ class SimulatedAnnealing:
 
         # Log improvement ratio
         improvement_ratio = (
-            (current_energy - minimum_energy) / current_energy
-            if current_energy > 0
+            (initial_energy - minimum_energy) / initial_energy
+            if initial_energy > 0
             else 0
         )
         mlflow.log_metric("improvement_ratio", improvement_ratio)

@@ -59,6 +59,7 @@ def main(config_path):
     config = load_config(config_path)
 
     param_grid = config["hyperparams"]
+    sa_config = config.get("sa_config", {})
     mlflow.set_experiment(
         config.get("mlflow_experiment", "TSP_Simulated_Annealing")
     )
@@ -120,8 +121,9 @@ def main(config_path):
                     mlflow.log_param("search_iteration", iteration + 1)
                     mlflow.log_param("is_adaptive", use_adaptive_this_iter)
                     mlflow.log_params(params)
+                    mlflow.log_params(sa_config)
 
-                    sa = SimulatedAnnealing(**params)
+                    sa = SimulatedAnnealing(**params, **sa_config)
                     best_solution = sa.optimize(problem, brazil_gdf=brazil)
                     score = problem.energy(best_solution)
                     mlflow.log_metric("score", score)
@@ -155,7 +157,8 @@ def main(config_path):
             LOGGER.info(f"Running with hyperparameters: {params}")
             with mlflow.start_run():
                 mlflow.log_params(params)
-                sa = SimulatedAnnealing(**params)
+                mlflow.log_params(sa_config)
+                sa = SimulatedAnnealing(**params, **sa_config)
                 best_solution = sa.optimize(problem, brazil_gdf=brazil)
                 score = problem.energy(best_solution)
                 mlflow.log_metric("score", score)
